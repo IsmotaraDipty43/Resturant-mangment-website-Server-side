@@ -16,3 +16,6 @@ This is the backend server for the **BistroBoss** restaurant website. It provide
 
 Available for real-time use: [BistroBoss Backend Live Demo](https://bistro-boss-server-nine-jade.vercel.app)
 
+## Client GitHub Link
+[Backend GitHub Repository](https://github.com/IsmotaraDipty43/Resturant-Mangment-Client-Full-Stack)
+
