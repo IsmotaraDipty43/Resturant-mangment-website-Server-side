@@ -10,6 +10,7 @@ This is the backend server for the **BistroBoss** restaurant website. It provide
 - **Environment Variables**: `.env` file for managing sensitive information.
 - **Database**: MongoDB for scalable and efficient data storage, including food items, user information, and orders.
 - **CRUD Operations**: `PUT`, `POST`, `DELETE`, and `GET` methods for managing food items, orders, and user management.
+- **Stripe Payment Integration**: Enables secure payment processing for orders using the Stripe API.
 - **Admin Features**: Admin can manage users, promote/demote admin roles, and delete users.
 
 ## Live Demo

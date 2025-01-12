@@ -1,10 +1,11 @@
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const express = require('express')
 const app = express();
 const cors = require("cors");
 require("dotenv").config()
 const jwt = require('jsonwebtoken');
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
+const stripe=require('stripe')(process.env.SECRECT_KEY_STRIPE)
 const port = process.env.PORT || 5000;
 
 
@@ -40,6 +41,7 @@ async function run() {
     const reviewCollection = client.db('bistroDb').collection('reviews')
     const CartCollection = client.db('bistroDb').collection('carts')
     const userCollection = client.db('bistroDb').collection('users')
+    const PaymentCollection = client.db('bistroDb').collection('payment')
 
 
 
@@ -104,13 +106,13 @@ const verifyAdmin = async(req,res,next)=>{
 
 
 
-app.get('/users', verifyToken, verifyAdmin,  async(req,res)=>{
+app.get('/users', verifyToken, async(req,res)=>{
 
   const result =await userCollection.find().toArray()
   res.send(result)
 })
 
-app.get('/users/adminuser/:email', verifyToken, verifyAdmin, async (req, res) => {
+app.get('/users/adminuser/:email', verifyToken,  async (req, res) => {
   const email = req.params.email;
 
        
@@ -137,7 +139,7 @@ app.get('/users/adminuser/:email', verifyToken, verifyAdmin, async (req, res) =>
 
 
 // Promote user to admin
-app.patch('/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
+app.patch('/users/admin/:id', verifyToken,verifyToken,  async (req, res) => {
   const id = req.params.id;
 
   const filter = { _id: new ObjectId(id) };
@@ -152,7 +154,7 @@ app.patch('/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 
-app.delete('/users/:id', verifyToken, verifyAdmin, async(req,res)=>{
+app.delete('/users/:id', verifyToken,verifyToken, async(req,res)=>{
   const id = req.params.id;
   const query = {_id: new ObjectId(id)}
   const result = await userCollection.deleteOne(query)
@@ -181,7 +183,7 @@ app.post('/menu',verifyToken, verifyAdmin, async(req,res)=>{
 })
 
 
-app.delete('/menu/user/delete/:id', verifyToken, verifyAdmin, async (req, res) =>{
+app.delete('/menu/user/delete/:id', verifyToken, verifyToken, async (req, res) =>{
   const id = req.params.id;
   const query = {_id: new ObjectId(id)}
   const result = await MenuCollection.deleteOne(query)
@@ -195,7 +197,7 @@ app.get('/menu/:id',async (req,res) =>{
   res.send(result)
 })
 
-app.patch('/menu/update/:id', async (req, res)=>{
+app.patch('/menu/update/:id',verifyToken,verifyAdmin, async (req, res)=>{
   const item = req.body;
   const id = req.params.id;
   const filter = { _id: new ObjectId(id)}
@@ -226,6 +228,29 @@ app.get('/review',async(req,res)=>{
   const result=await reviewCollection.find().toArray()
   res.send(result)
 })
+app.post('/reviews', async (req, res) => {
+  const { name, details, rating } = req.body;
+
+  if (!name || !details || !rating) {
+      return res.status(400).json({ message: 'All fields are required' });
+  }
+
+  try {
+      const reviewData = { name, details, rating };
+
+      const result = await reviewCollection.insertOne(reviewData);
+
+      if (result.insertedId) {
+          res.status(201).json({ message: 'Review added successfully' });
+      } else {
+          res.status(500).json({ message: 'Failed to add review' });
+      }
+  } catch (error) {
+      console.error('Error adding review:', error);
+      res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 
 
 app.post('/carts', async(req,res)=>{
@@ -249,6 +274,153 @@ app.delete('/carts/:id', async(req,res)=>{
   const result = await CartCollection.deleteOne(query)
   res.send(result)
 })
+
+
+//payment-endpoint
+app.post('/create-payment-intent', async (req, res) => {
+  try {
+    const { price } = req.body;
+    const amount = parseInt(price * 100);
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount,
+      currency: 'usd',
+      payment_method_types: ['card'],
+    });
+
+    res.send({ client_secret: paymentIntent.client_secret });
+  } catch (error) {
+    console.error('Error creating payment intent:', error);
+    res.status(500).send({ error: 'Failed to create payment intent' });
+  }
+});
+
+
+app.post('/payments', async(req,res)=>{
+  const payment = req.body;
+   const Paymentresult=await PaymentCollection.insertOne(payment)
+
+   //carefully delete the each item from the cart
+
+   const query = {_id:{
+    $in:payment.cartIds.map(id=>new ObjectId(id))
+   }}
+   const deletResult = await CartCollection.deleteMany(query)
+   res.send({Paymentresult, deletResult});
+
+
+})
+
+app.get('/payments/:email', verifyToken, async (req, res) => {
+  const email = req.params.email;
+
+  // Verify if the email matches the decoded token
+  if (email !== req.decoded.email) {
+      return res.status(403).send({ message: 'Forbidden access' });
+  }
+
+  // Query the database for payments
+  const query = { email: email };
+  const result = await PaymentCollection.find(query).toArray();
+
+  res.send(result);
+});
+
+
+//stats or analyties
+
+app.get('/admin-stats', verifyToken,verifyAdmin, async(req,res)=>{
+  const  user = await userCollection.estimatedDocumentCount();
+  const menuItem = await  MenuCollection.estimatedDocumentCount();
+  const order = await PaymentCollection.estimatedDocumentCount();
+const result = await PaymentCollection.aggregate([
+  {
+    $group:{
+      _id: null,
+      totalRevenue:{
+        $sum: '$price'
+      }
+    }
+  }
+]).toArray()
+const Revenue = result.length>0 ?result[0].totalRevenue:0;
+
+  res.send({
+    user,
+    menuItem,
+    order,
+    Revenue 
+  })
+})
+
+
+
+
+// using agregate pipeline 
+
+
+
+app.get('/order-stats', async (req, res) => {
+  const result = await PaymentCollection.aggregate([
+    {
+      $unwind: '$menuItemIds',
+    },
+    {
+      $addFields: {
+        menuItemIds: { $toObjectId: '$menuItemIds' }, // Convert menuItemIds to ObjectId
+      },
+    },
+    {
+      $lookup: {
+        from: 'menu',
+        localField: 'menuItemIds',
+        foreignField: '_id',
+        as: 'menuItems',
+      },
+    },
+    {
+      $unwind: '$menuItems',
+    },
+    {
+      $group: {
+        _id: '$menuItems.category',
+        quantity: {
+          $sum: 1,
+        },
+        revenue: {$sum:'$menuItems.price'}
+      },
+
+    },
+    {
+      $project:{
+        _id: 0,
+        category: '$_id',
+        quantity:'$quantity',
+        revenue: '$revenue'
+      }
+    }
+  ]).toArray();
+
+  res.send(result);
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
