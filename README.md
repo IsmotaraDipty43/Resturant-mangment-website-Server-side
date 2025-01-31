@@ -11,6 +11,7 @@ This is the backend server for the **BistroBoss** restaurant website. It provide
 - **Database**: MongoDB for scalable and efficient data storage, including food items, user information, and orders.
 - **CRUD Operations**: `PUT`, `POST`, `DELETE`, and `GET` methods for managing food items, orders, and user management.
 - **Stripe Payment Integration**: Enables secure payment processing for orders using the Stripe API.
+- **SSLCommerz Payment Gateway**: For handling local transactions in Bangladesh.
 - **Admin Features**:  Admins can - Manage users, including promoting/demoting admin roles and deleting users.Perform advanced queries using the aggregate function in MongoDB for analytics and efficient data handling.
 
 ## Live Demo

@@ -1,24 +1,32 @@
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const axios = require('axios');
 const express = require('express')
+const formData = require('form-data');
+const Mailgun = require('mailgun.js');
 const app = express();
 const cors = require("cors");
 require("dotenv").config()
 const jwt = require('jsonwebtoken');
 
 const stripe=require('stripe')(process.env.SECRECT_KEY_STRIPE)
-const port = process.env.PORT || 5000;
+const mailgun = new Mailgun(formData);
+const mg = mailgun.client({
+    username: 'api',
+    key: process.env.MAIL_GUN_API_KEY,
+});
+const port = process.env.PORT || 5001;
 
 
 app.use(cors({
 
-  origin: ['http://localhost:5173', 'https://bistro-boss-86203.web.app', 'https://bistro-boss-86203.firebaseapp.com'], 
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'https://bistro-boss-86203.web.app', 'https://bistro-boss-86203.firebaseapp.com'], 
 }
 ));
 
 
 app.use(express.json())
 
-
+app.use(express.urlencoded())
 
 
 
@@ -36,7 +44,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
     const MenuCollection = client.db('bistroDb').collection('menu')
     const reviewCollection = client.db('bistroDb').collection('reviews')
     const CartCollection = client.db('bistroDb').collection('carts')
@@ -95,7 +103,102 @@ const verifyAdmin = async(req,res,next)=>{
 
 
 
+//ssl payment
 
+
+
+app.post("/creat-ssl-payment", async (req, res) => {
+  const payment = req.body;
+  console.log("paymentinfo", payment);
+
+  if (!payment.price || !payment.email) {
+    return res.status(400).json({ error: "Price and email are required" });
+  }
+
+  const trxId = new ObjectId().toString();
+  payment.transactionId= trxId;
+  const initiate = {
+    store_id: "bistr679b281161c47",
+    store_passwd: "bistr679b281161c47@ssl",
+    total_amount: payment.price,
+    currency: 'BDT',
+    tran_id: trxId, // use unique tran_id for each API call
+    success_url: 'https://bistro-boss-server-nine-jade.vercel.app/success-payment',
+    fail_url: 'http://localhost:5173/fail',
+    cancel_url: 'http://localhost:5173/cancel',
+    ipn_url: 'https://bistro-boss-server-nine-jade.vercel.app/ipn-success-payment',
+    cus_name: 'Customer Name',
+    cus_email: payment.email,
+    cus_add1: 'Dhaka',
+    cus_add2: 'Dhaka',
+    cus_city: 'Dhaka',
+    cus_state: 'Dhaka',
+    cus_postcode: '1000',
+    cus_country: 'Bangladesh',
+    cus_phone: '01711111111',
+    cus_fax: '01711111111',
+    ship_name: 'Customer Name',
+    ship_add1: 'Dhaka',
+    ship_add2: 'Dhaka',
+    ship_city: 'Dhaka',
+    ship_state: 'Dhaka',
+    ship_postcode: 1000,
+    ship_country: 'Bangladesh',
+    shipping_method: 'Courier',
+    product_name: 'Computer.',
+    product_category: 'Electronic',
+    product_profile: 'general',
+  };
+
+  try {
+    const iniResponse = await axios({
+      url: "https://sandbox.sslcommerz.com/gwprocess/v4/api.php",
+      method: "POST",
+      data: initiate,
+      headers: {
+        "Content-type": "application/x-www-form-urlencoded"
+      }
+    });
+
+    const savedata = await PaymentCollection.insertOne(payment)
+    const gatewayUrl = iniResponse?.data?.GatewayPageURL;
+    console.log(gatewayUrl);
+    res.send({gatewayUrl})
+  
+    // console.log(iniResponse.data, "iniResponse");
+  
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Payment initiation failed." });
+  }
+});
+
+app.post("/success-payment", async (req, res) => {
+  //sucess data
+   const paymentSucess = req.body;
+  //  console.log("sucess", paymentSucess);
+  //validation
+   const {data} = await axios.get(`https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php?val_id=${paymentSucess.val_id}&store_id=bistr679b281161c47&store_passwd=bistr679b281161c47@ssl&format=json`)
+  
+   if(data.status !== "VALID"){
+   return res.send({message: 'Invalid Payment'})
+   }
+   //update the payment
+   const update = await PaymentCollection.updateOne({transactionId:data.tran_id},{
+    $set:{
+      status:"success"
+    },
+   })
+   const payment = await PaymentCollection.findOne({transactionId:data.tran_id})
+   const query = {
+    _id: {
+      $in:payment.cartIds.map((id)=>new ObjectId(id))
+    }
+   }
+   const deleteResult = await CartCollection.deleteMany(query)
+   res.redirect('https://bistro-boss-86203.web.app/success')
+   console.log(update);
+})
 
 
 
@@ -306,6 +409,26 @@ app.post('/payments', async(req,res)=>{
     $in:payment.cartIds.map(id=>new ObjectId(id))
    }}
    const deletResult = await CartCollection.deleteMany(query)
+   //send user a payment email
+//    mg.messages.create(process.env.MAIL_GUN_SEND_DOMAIN, {
+//     from: 'Mailgun Sandbos <postmaster@sandboxc76b36ab349048eca858128ff493cf3e.mailgun.org>',
+//     to: ['ismotaradipty81@gmail.com'],
+//     subject: 'Bistro Boss confirmation of ordering',
+//     text: 'Testing Mailgun.js!',
+//     html:`
+//     <div>
+//     <h2>Thank You for the ordering.</h2>
+//     <h4>Your Transaction Id:<strong>${payment.transactionId}</strong></h4>
+//     <p>We would like to get your feedbaxk about the food.</p>
+//     </div>
+//     `
+// })
+// .then((response) => {
+//     console.log('Email sent successfully:', response);
+// })
+// .catch((error) => {
+//     console.error('Error sending email:', error);
+// });
    res.send({Paymentresult, deletResult});
 
 
@@ -425,7 +548,7 @@ app.get('/order-stats', async (req, res) => {
 
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
